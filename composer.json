@@ -36,7 +36,7 @@
         "doctrine/dbal": "^4.4.1",
         "illuminate/cache": "^12.0",
         "illuminate/database": "^12.0",
-        "saloonphp/saloon": "^2.12.1"
+        "saloonphp/saloon": "^3.0"
     },
     "suggest": {
         "ext-pdo": "Required to extend the PDO driver for Cloudflare D1."

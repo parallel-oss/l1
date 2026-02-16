@@ -2,7 +2,7 @@
 
 namespace Parallel\L1;
 
-use Saloon\Contracts\Connector;
+use Saloon\Http\Connector;
 use Saloon\Http\Request;
 
 abstract class CloudflareRequest extends Request
