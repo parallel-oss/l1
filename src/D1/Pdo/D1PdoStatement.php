@@ -1,6 +1,6 @@
 <?php
 
-namespace RenokiCo\L1\D1\Pdo;
+namespace Parallel\L1\D1\Pdo;
 
 use Illuminate\Support\Arr;
 use PDO;

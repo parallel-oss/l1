@@ -1,5 +1,5 @@
 {
-    "name": "renoki-co/l1",
+    "name": "parallel-oss/l1",
     "description": "Laravel integration for Cloudflare Workers services.",
     "keywords": [
         "laravel",
@@ -18,12 +18,17 @@
         "serverless architecture"
     ],
     "license": "Apache-2.0",
-    "homepage": "https://github.com/renoki-co/l1",
+    "homepage": "https://github.com/parallel-oss/l1",
     "authors": [
         {
             "name": "Alex Renoki",
             "homepage": "https://github.com/rennokki",
             "role": "Developer"
+        },
+        {
+            "name": "Parallel",
+            "homepage": "https://github.com/parallel-oss",
+            "role": "Maintainer"
         }
     ],
     "require": {
@@ -39,12 +44,12 @@
     },
     "autoload": {
         "psr-4": {
-            "RenokiCo\\L1\\": "src/"
+            "Parallel\\L1\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "RenokiCo\\L1\\Test\\": "tests"
+            "Parallel\\L1\\Test\\": "tests"
         }
     },
     "scripts": {
@@ -63,7 +68,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "RenokiCo\\L1\\L1ServiceProvider"
+                "Parallel\\L1\\L1ServiceProvider"
             ]
         }
     }

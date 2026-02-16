@@ -1,6 +1,6 @@
 <?php
 
-namespace RenokiCo\L1\Test;
+namespace Parallel\L1\Test;
 
 use Orchestra\Testbench\TestCase as Orchestra;
 
@@ -24,7 +24,7 @@ abstract class TestCase extends Orchestra
     protected function getPackageProviders($app)
     {
         return [
-            \RenokiCo\L1\L1ServiceProvider::class,
+            \Parallel\L1\L1ServiceProvider::class,
         ];
     }
 

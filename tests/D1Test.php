@@ -1,9 +1,9 @@
 <?php
 
-namespace RenokiCo\L1\Test;
+namespace Parallel\L1\Test;
 
 use Illuminate\Support\Facades\DB;
-use RenokiCo\L1\Test\Models\User;
+use Parallel\L1\Test\Models\User;
 
 class D1Test extends TestCase
 {

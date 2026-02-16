@@ -1,12 +1,8 @@
 # L1 - Cloudflare bindings for Laravel
 
-![CI](https://github.com/renoki-co/l1/workflows/CI/badge.svg?branch=master)
-[![codecov](https://codecov.io/gh/renoki-co/l1/branch/master/graph/badge.svg)](https://codecov.io/gh/renoki-co/l1/branch/master)
-[![StyleCI](https://github.styleci.io/repos/651202208/shield?branch=master)](https://github.styleci.io/repos/651202208)
-[![Latest Stable Version](https://poser.pugx.org/renoki-co/l1/v/stable)](https://packagist.org/packages/renoki-co/l1)
-[![Total Downloads](https://poser.pugx.org/renoki-co/l1/downloads)](https://packagist.org/packages/renoki-co/l1)
-[![Monthly Downloads](https://poser.pugx.org/renoki-co/l1/d/monthly)](https://packagist.org/packages/renoki-co/l1)
-[![License](https://poser.pugx.org/renoki-co/l1/license)](https://packagist.org/packages/renoki-co/l1)
+![CI](https://github.com/parallel-oss/l1/workflows/CI/badge.svg?branch=master)
+[![Latest Stable Version](https://poser.pugx.org/parallel-oss/l1/v/stable)](https://packagist.org/packages/parallel-oss/l1)
+[![License](https://poser.pugx.org/parallel-oss/l1/license)](https://packagist.org/packages/parallel-oss/l1)
 
 Extend your PHP/Laravel application with Cloudflare bindings.
 
@@ -21,7 +17,7 @@ This package offers support for:
 You can install the package via Composer:
 
 ```bash
-composer require renoki-co/l1
+composer require parallel-oss/l1
 ```
 
 ## 🙌 Usage
@@ -31,9 +27,9 @@ composer require renoki-co/l1
 Though D1 is not connectable via SQL protocols, it can be used as a PDO driver via the package connector. This proxies the query and bindings to the D1's `/query` endpoint in the Cloudflare API.
 
 ```php
-use RenokiCo\L1\D1\D1Pdo;
-use RenokiCo\L1\D1\D1PdoStatement;
-use RenokiCo\L1\CloudflareD1Connector;
+use Parallel\L1\D1\D1Pdo;
+use Parallel\L1\D1\D1PdoStatement;
+use Parallel\L1\CloudflareD1Connector;
 
 $pdo = new D1Pdo(
     dsn: 'sqlite::memory:', // irrelevant
@@ -94,11 +90,12 @@ vendor/bin/phpunit
 
 Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
 
-## 🔒  Security
+## 🔒 Security
 
-If you discover any security related issues, please email <alex@renoki.org> instead of using the issue tracker.
+If you discover any security related issues, please open an issue on GitHub.
 
 ## 🎉 Credits
 
-- [Alex Renoki](https://github.com/rennokki)
+- [Alex Renoki](https://github.com/rennokki) – original author
+- [Parallel](https://github.com/parallel-oss) – maintainer
 - [All Contributors](../../contributors)

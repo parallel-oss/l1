@@ -1,6 +1,6 @@
 <?php
 
-namespace RenokiCo\L1;
+namespace Parallel\L1;
 
 use Saloon\Http\Connector;
 
