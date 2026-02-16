@@ -22,9 +22,7 @@ class D1Connection extends SQLiteConnection
 
     protected function getDefaultSchemaGrammar()
     {
-        ($grammar = new D1SchemaGrammar)->setConnection($this);
-
-        return $this->withTablePrefix($grammar);
+        return new D1SchemaGrammar($this);
     }
 
     public function d1(): CloudflareD1Connector

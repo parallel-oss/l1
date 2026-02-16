@@ -7,38 +7,49 @@ use Illuminate\Support\Str;
 
 class D1SchemaGrammar extends SQLiteGrammar
 {
-    public function compileTableExists()
+    /**
+     * Replace sqlite_master with D1's schema table in a compiled SQL string.
+     */
+    private function forD1(string $sql): string
     {
-        return Str::of(parent::compileTableExists())
+        return Str::of($sql)
             ->replace('sqlite_master', 'sqlite_schema')
             ->__toString();
     }
 
-    public function compileDropAllTables()
+    /** @inheritDoc */
+    public function compileSqlCreateStatement($schema, $name, $type = 'table')
     {
-        return Str::of(parent::compileDropAllTables())
-            ->replace('sqlite_master', 'sqlite_schema')
-            ->__toString();
+        return $this->forD1(parent::compileSqlCreateStatement($schema, $name, $type));
     }
 
-    public function compileDropAllViews()
+    /** @inheritDoc */
+    public function compileTableExists($schema, $table)
     {
-        return Str::of(parent::compileDropAllViews())
-            ->replace('sqlite_master', 'sqlite_schema')
-            ->__toString();
+        return $this->forD1(parent::compileTableExists($schema, $table));
     }
 
-    public function compileGetAllTables()
+    /** @inheritDoc */
+    public function compileLegacyTables($schema, $withSize = false)
     {
-        return Str::of(parent::compileGetAllTables())
-            ->replace('sqlite_master', 'sqlite_schema')
-            ->__toString();
+        return $this->forD1(parent::compileLegacyTables($schema, $withSize));
     }
 
-    public function compileGetAllViews()
+    /** @inheritDoc */
+    public function compileViews($schema)
     {
-        return Str::of(parent::compileGetAllViews())
-            ->replace('sqlite_master', 'sqlite_schema')
-            ->__toString();
+        return $this->forD1(parent::compileViews($schema));
+    }
+
+    /** @inheritDoc */
+    public function compileDropAllTables($schema = null)
+    {
+        return $this->forD1(parent::compileDropAllTables($schema));
+    }
+
+    /** @inheritDoc */
+    public function compileDropAllViews($schema = null)
+    {
+        return $this->forD1(parent::compileDropAllViews($schema));
     }
 }

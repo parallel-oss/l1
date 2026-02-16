@@ -10,7 +10,7 @@ class D1Test extends TestCase
     public function test_d1_database_select()
     {
         /** @var User $user */
-        $user = factory(User::class)->create();
+        $user = User::factory()->create();
 
         $this->assertDatabaseHas('users', [
             'id' => $user->id,
@@ -20,11 +20,11 @@ class D1Test extends TestCase
     public function test_d1_database_transaction()
     {
         /** @var User $user */
-        $user = factory(User::class)->create();
+        $user = User::factory()->create();
 
         DB::transaction(function () {
             /** @var User $user */
-            $user = factory(User::class)->create();
+            $user = User::factory()->create();
             $dbUser = User::whereEmail($user->email)->first();
 
             $this->assertEquals($user->id, $dbUser->id);

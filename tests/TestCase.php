@@ -14,8 +14,6 @@ abstract class TestCase extends Orchestra
         parent::setUp();
 
         $this->loadLaravelMigrations(['--database' => 'd1']);
-
-        $this->withFactories(__DIR__.'/database/factories');
     }
 
     /**
