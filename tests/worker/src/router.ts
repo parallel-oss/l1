@@ -4,6 +4,7 @@ const router = Router();
 
 declare type Env = {
 	DB1: D1Database;
+	DB2: D1Database;
 	[key: string]: any;
 }
 
@@ -14,7 +15,8 @@ router.post(
 		let res: D1Result;
 
 		try {
-			res = await (env[request.params.database as string] as D1Database)
+			const db = (env[request.params.database as string] ?? env.DB1) as D1Database;
+			res = await db
 				.prepare(body.sql)
 				.bind(...(body.params || []))
 				.all();

@@ -72,19 +72,13 @@ The `d1` driver will proxy the PDO queries to the Cloudflare D1 API to run quer
 
 ## 🐛 Testing
 
-Start the built-in Worker that simulates the Cloudflare API:
+Run all tests (the built-in D1 worker is started automatically):
 
 ```bash
-cd tests/worker
-npm ci
-npm run start
+composer test
 ```
 
-In a separate terminal, run the tests:
-
-``` bash
-vendor/bin/phpunit
-```
+This starts the Worker that simulates the Cloudflare D1 API, runs PHPUnit, then stops the worker. The first run will install worker dependencies (`npm ci` in `tests/worker`) if needed.
 
 ## 🤝 Contributing
 

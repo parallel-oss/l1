@@ -2,6 +2,7 @@ import apiRouter from './router';
 
 export type Env = {
 	DB1: D1Database;
+	DB2: D1Database;
 };
 
 export default {

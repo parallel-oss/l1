@@ -12,6 +12,10 @@ class D1PdoStatement extends PDOStatement
     protected int $fetchMode = PDO::FETCH_ASSOC;
     protected array $bindings = [];
     protected array $responses = [];
+    protected int $rowIndex = 0;
+    protected array $rows = [];
+    /** @var int|null Rows affected (from D1 meta.changes) for write statements */
+    protected ?int $changes = null;
 
     public function __construct(
         protected D1Pdo &$pdo,
@@ -51,15 +55,25 @@ class D1PdoStatement extends PDOStatement
         );
 
         if ($response->failed() || ! $response->json('success')) {
-            throw new PDOException(
-                (string) $response->json('errors.0.message'),
-                (int) $response->json('errors.0.code'),
-            );
+            $message = (string) $response->json('errors.0.message');
+            $code = (int) $response->json('errors.0.code');
+            if (stripos($message, 'UNIQUE constraint') !== false || stripos($message, 'SQLITE_CONSTRAINT') !== false) {
+                $message = 'SQLSTATE[23000]: Integrity constraint violation: ' . $message;
+                $code = 23000;
+            }
+            throw new PDOException($message, $code);
         }
 
         $this->responses = $response->json('result');
+        $this->rows = $this->rowsFromResponses();
+        $this->rowIndex = 0;
+        $lastResult = Arr::last($this->responses);
+        $this->changes = null;
+        if (count($this->rows) === 0 && $lastResult && isset($lastResult['meta']['changes'])) {
+            $this->changes = (int) $lastResult['meta']['changes'];
+        }
 
-        $lastId = Arr::get(Arr::last($this->responses), 'meta.last_row_id', null);
+        $lastId = Arr::get($lastResult, 'meta.last_row_id', null);
 
         if (! in_array($lastId, [0, null])) {
             $this->pdo->setLastInsertId(value: $lastId);
@@ -68,13 +82,24 @@ class D1PdoStatement extends PDOStatement
         return true;
     }
 
+    public function fetch(int $mode = PDO::FETCH_DEFAULT, $cursorOrientation = PDO::FETCH_ORI_NEXT, $cursorOffset = 0): mixed
+    {
+        if ($this->rowIndex >= count($this->rows)) {
+            return false;
+        }
+        $row = $this->rows[$this->rowIndex++];
+        return match ($this->fetchMode) {
+            PDO::FETCH_ASSOC => $row,
+            PDO::FETCH_OBJ => (object) $row,
+            default => throw new PDOException('Unsupported fetch mode.'),
+        };
+    }
+
     public function fetchAll(int $mode = PDO::FETCH_DEFAULT, ...$args): array
     {
         $response = match ($this->fetchMode) {
-            PDO::FETCH_ASSOC => $this->rowsFromResponses(),
-            PDO::FETCH_OBJ => collect($this->rowsFromResponses())->map(function ($row) {
-                return (object) $row;
-            })->toArray(),
+            PDO::FETCH_ASSOC => $this->rows,
+            PDO::FETCH_OBJ => collect($this->rows)->map(fn ($row) => (object) $row)->toArray(),
             default => throw new PDOException('Unsupported fetch mode.'),
         };
 
@@ -83,7 +108,10 @@ class D1PdoStatement extends PDOStatement
 
     public function rowCount(): int
     {
-        return count($this->rowsFromResponses());
+        if ($this->changes !== null) {
+            return $this->changes;
+        }
+        return count($this->rows);
     }
 
     protected function rowsFromResponses(): array

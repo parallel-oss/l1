@@ -6,3 +6,10 @@ compatibility_date = "2023-05-18"
 binding = "DB1"
 database_name = "db1"
 database_id = "DB1"
+preview_database_id = "DB1"
+
+[[d1_databases]]
+binding = "DB2"
+database_name = "db2"
+database_id = "DB2"
+preview_database_id = "DB2"

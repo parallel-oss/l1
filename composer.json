@@ -33,10 +33,10 @@
     ],
     "require": {
         "php": "^8.2",
-        "doctrine/dbal": "^4.0",
+        "doctrine/dbal": "^4.4.1",
         "illuminate/cache": "^12.0",
         "illuminate/database": "^12.0",
-        "saloonphp/saloon": "^2.11"
+        "saloonphp/saloon": "^2.12.1"
     },
     "suggest": {
         "ext-pdo": "Required to extend the PDO driver for Cloudflare D1."
@@ -48,19 +48,24 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Parallel\\L1\\Test\\": "tests"
+            "Parallel\\L1\\Test\\": "tests",
+            "Illuminate\\Tests\\": "vendor/laravel/framework/tests"
         }
     },
     "scripts": {
-        "test": "vendor/bin/phpunit"
+        "test": "bash scripts/run-all-tests.sh"
     },
     "require-dev": {
-        "mockery/mockery": "^1.5",
-        "orchestra/testbench": "^10.0",
-        "phpunit/phpunit": "^11.5.3|^12.0.1"
+        "laravel/framework": "^12.51",
+        "mockery/mockery": "^1.6.12",
+        "orchestra/testbench": "^10.9",
+        "phpunit/phpunit": "^11.5.3|^12.5.12"
     },
     "config": {
-        "sort-packages": true
+        "sort-packages": true,
+        "preferred-install": {
+            "laravel/framework": "source"
+        }
     },
     "minimum-stability": "stable",
     "extra": {
