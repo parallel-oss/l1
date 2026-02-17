@@ -19,7 +19,7 @@ class D1Pdo extends PDO
         parent::__construct('sqlite::memory:');
     }
 
-    public function prepare($query, $options = []): PDOStatement|bool
+    public function prepare(string $query, array $options = []): PDOStatement|false
     {
         return new D1PdoStatement(
             $this,

@@ -32,7 +32,7 @@ class D1PdoStatement extends PDOStatement
         return true;
     }
 
-    public function bindValue($param, $value, $type = PDO::PARAM_STR): bool
+    public function bindValue(string|int $param, mixed $value, int $type = PDO::PARAM_STR): bool
     {
         $this->bindings[$param] = match ($type) {
             PDO::PARAM_STR => (string) $value,
@@ -45,9 +45,9 @@ class D1PdoStatement extends PDOStatement
         return true;
     }
 
-    public function execute($params = []): bool
+    public function execute(?array $params = null): bool
     {
-        $this->bindings = array_values($this->bindings ?: $params);
+        $this->bindings = array_values($this->bindings ?: $params ?? []);
 
         $response = $this->pdo->d1()->databaseQuery(
             $this->query,
@@ -82,7 +82,7 @@ class D1PdoStatement extends PDOStatement
         return true;
     }
 
-    public function fetch(int $mode = PDO::FETCH_DEFAULT, $cursorOrientation = PDO::FETCH_ORI_NEXT, $cursorOffset = 0): mixed
+    public function fetch(int $mode = PDO::FETCH_DEFAULT, int $cursorOrientation = PDO::FETCH_ORI_NEXT, int $cursorOffset = 0): mixed
     {
         if ($this->rowIndex >= count($this->rows)) {
             return false;
@@ -95,7 +95,7 @@ class D1PdoStatement extends PDOStatement
         };
     }
 
-    public function fetchAll(int $mode = PDO::FETCH_DEFAULT, ...$args): array
+    public function fetchAll(int $mode = PDO::FETCH_DEFAULT, mixed ...$args): array
     {
         $response = match ($this->fetchMode) {
             PDO::FETCH_ASSOC => $this->rows,
