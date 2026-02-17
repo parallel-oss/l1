@@ -42,13 +42,18 @@ class D1Pdo extends PDO
         $this->lastInsertIds[$name] = $value;
     }
 
-    public function lastInsertId($name = null): bool|string
+    public function lastInsertId(?string $name = null): string|false
     {
         if ($name === null) {
             $name = 'id';
         }
 
-        return $this->lastInsertIds[$name] ?? false;
+        $value = $this->lastInsertIds[$name] ?? null;
+        if ($value === null || $value === false) {
+            return false;
+        }
+
+        return (string) $value;
     }
 
     public function beginTransaction(): bool
