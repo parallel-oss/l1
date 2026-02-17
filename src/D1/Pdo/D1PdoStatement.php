@@ -25,7 +25,7 @@ class D1PdoStatement extends PDOStatement
         //
     }
 
-    public function setFetchMode(int $mode, mixed ...$args): bool
+    public function setFetchMode(int $mode, mixed ...$args): true
     {
         $this->fetchMode = $mode;
 
