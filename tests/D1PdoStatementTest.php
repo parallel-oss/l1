@@ -30,12 +30,12 @@ class D1PdoStatementTest extends TestCase
         $statement = new D1PdoStatement($pdo, 'insert into "t" ("a", "b") values (?, ?)');
 
         $this->expectException(PDOException::class);
-        $this->expectExceptionMessage('D1 request failed with HTTP 400. Response: Syntax error');
+        $this->expectExceptionMessage('D1 transport error (HTTP 400): Syntax error');
 
         $statement->execute(['uuid', 'status:missed']);
     }
 
-    public function testRetriesTransientHttpFailureThenSucceeds(): void
+    public function testRetriesTransientHttpFailureForReadOnlyQueryThenSucceeds(): void
     {
         $connector = $this->createMock(CloudflareD1Connector::class);
         $connector->expects($this->exactly(2))
@@ -54,8 +54,10 @@ class D1PdoStatementTest extends TestCase
                         'success' => true,
                         'result' => [
                             [
-                                'results' => [],
-                                'meta' => ['changes' => 3],
+                                'results' => [
+                                    ['id' => 1, 'name' => 'ok'],
+                                ],
+                                'meta' => ['changes' => 0],
                             ],
                         ],
                     ],
@@ -63,12 +65,95 @@ class D1PdoStatementTest extends TestCase
             );
 
         $pdo = new D1Pdo('sqlite::memory:', $connector);
-        $statement = new D1PdoStatement($pdo, 'insert into "t" ("a", "b") values (?, ?), (?, ?), (?, ?)');
+        $statement = new D1PdoStatement($pdo, 'select * from "t" where "id" = ?');
 
-        $executed = $statement->execute(['u1', 't1', 'u2', 't2', 'u3', 't3']);
+        $executed = $statement->execute([1]);
 
         $this->assertTrue($executed);
-        $this->assertSame(3, $statement->rowCount());
+        $this->assertSame([['id' => 1, 'name' => 'ok']], $statement->fetchAll());
+    }
+
+    public function testDoesNotRetryTransientFailureForWriteQueryByDefault(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connector->expects($this->once())
+            ->method('databaseQuery')
+            ->willReturn($this->makeResponse(
+                failed: true,
+                status: 503,
+                payload: null,
+                body: 'Service Unavailable'
+            ));
+
+        $pdo = new D1Pdo('sqlite::memory:', $connector);
+        $statement = new D1PdoStatement($pdo, 'insert into "t" ("a", "b") values (?, ?)');
+
+        $this->expectException(PDOException::class);
+        $this->expectExceptionMessage('D1 transport error (HTTP 503): Service Unavailable');
+
+        $statement->execute(['u1', 't1']);
+    }
+
+    public function testJsonErrorPayloadIsMappedToStablePdoException(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connector->expects($this->once())
+            ->method('databaseQuery')
+            ->willReturn($this->makeResponse(
+                failed: true,
+                status: 500,
+                payload: [
+                    'success' => false,
+                    'errors' => [
+                        [
+                            'message' => 'D1 DB is overloaded. Requests queued for too long.',
+                            'code' => 9001,
+                        ],
+                    ],
+                ],
+            ));
+
+        $pdo = new D1Pdo('sqlite::memory:', $connector);
+        $statement = new D1PdoStatement($pdo, 'insert into "t" ("a") values (?)');
+
+        try {
+            $statement->execute(['x']);
+            $this->fail('Expected PDOException was not thrown.');
+        } catch (PDOException $e) {
+            $this->assertSame('D1 DB is overloaded. Requests queued for too long.', $e->getMessage());
+            $this->assertSame(9001, $e->getCode());
+        }
+    }
+
+    public function testUniqueConstraintErrorIsMappedToIntegrityConstraintViolation(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connector->expects($this->once())
+            ->method('databaseQuery')
+            ->willReturn($this->makeResponse(
+                failed: true,
+                status: 400,
+                payload: [
+                    'success' => false,
+                    'errors' => [
+                        [
+                            'message' => 'UNIQUE constraint failed: users.email',
+                            'code' => 7500,
+                        ],
+                    ],
+                ],
+            ));
+
+        $pdo = new D1Pdo('sqlite::memory:', $connector);
+        $statement = new D1PdoStatement($pdo, 'insert into "users" ("email") values (?)');
+
+        try {
+            $statement->execute(['test@example.com']);
+            $this->fail('Expected PDOException was not thrown.');
+        } catch (PDOException $e) {
+            $this->assertStringStartsWith('SQLSTATE[23000]: Integrity constraint violation:', $e->getMessage());
+            $this->assertSame(23000, $e->getCode());
+        }
     }
 
     public function testStringableBindingsAreNormalizedBeforeRequest(): void

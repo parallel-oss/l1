@@ -18,6 +18,30 @@ class D1PdoStatement extends PDOStatement
 
     protected const RETRYABLE_HTTP_STATUSES = [408, 409, 425, 429, 500, 502, 503, 504];
 
+    /**
+     * Retry is conservative by default: safe reads + explicitly idempotent DDL patterns.
+     */
+    protected const RETRYABLE_QUERY_PATTERNS = [
+        '/^\s*(select|explain|with)\b/is',
+        '/^\s*create\s+table\s+if\s+not\s+exists\b/is',
+        '/^\s*create\s+(unique\s+)?index\s+if\s+not\s+exists\b/is',
+        '/^\s*drop\s+table\s+if\s+exists\b/is',
+        '/^\s*drop\s+index\s+if\s+exists\b/is',
+    ];
+
+    protected const RETRYABLE_ERROR_FRAGMENTS = [
+        'network connection lost',
+        'storage caused object to be reset',
+        'reset because its code was updated',
+        'cannot resolve d1 db due to transient issue',
+        'd1 db is overloaded',
+        'requests queued for too long',
+        'too many requests queued',
+        'temporarily unavailable',
+        'database is locked',
+        'timeout',
+    ];
+
     protected int $fetchMode = PDO::FETCH_ASSOC;
     protected array $bindings = [];
     protected array $responses = [];
@@ -34,7 +58,8 @@ class D1PdoStatement extends PDOStatement
         //
     }
 
-    public function setFetchMode(int $mode, mixed ...$args): true
+    #[\ReturnTypeWillChange]
+    public function setFetchMode(int $mode, mixed ...$args)
     {
         $this->fetchMode = $mode;
 
@@ -65,23 +90,11 @@ class D1PdoStatement extends PDOStatement
         [$response, $payload] = $this->executeWithRetries();
 
         if (! is_array($payload)) {
-            throw new PDOException($this->buildTransportErrorMessage($response), $response->status());
+            throw $this->buildPdoExceptionFromResponse($response, $payload);
         }
 
         if ($response->failed() || ! Arr::get($payload, 'success', false)) {
-            $message = (string) Arr::get($payload, 'errors.0.message', '');
-            $code = (int) Arr::get($payload, 'errors.0.code', $response->status());
-
-            if ($message === '') {
-                $message = $this->buildTransportErrorMessage($response);
-            }
-
-            if (stripos($message, 'UNIQUE constraint') !== false || stripos($message, 'SQLITE_CONSTRAINT') !== false) {
-                $message = 'SQLSTATE[23000]: Integrity constraint violation: ' . $message;
-                $code = 23000;
-            }
-
-            throw new PDOException($message, $code);
+            throw $this->buildPdoExceptionFromResponse($response, $payload);
         }
 
         $this->responses = Arr::get($payload, 'result', []);
@@ -149,6 +162,7 @@ class D1PdoStatement extends PDOStatement
     {
         $attempt = 0;
         $maxAttempts = static::MAX_RETRIES + 1;
+        $isRetryEligibleQuery = $this->isRetryEligibleQuery($this->query);
 
         do {
             $response = $this->pdo->d1()->databaseQuery(
@@ -163,7 +177,7 @@ class D1PdoStatement extends PDOStatement
             }
 
             $attempt++;
-            if ($attempt >= $maxAttempts || ! $this->shouldRetry($response, $payload)) {
+            if ($attempt >= $maxAttempts || ! $isRetryEligibleQuery || ! $this->shouldRetry($response, $payload)) {
                 return [$response, $payload];
             }
 
@@ -202,9 +216,13 @@ class D1PdoStatement extends PDOStatement
             return false;
         }
 
-        return str_contains($message, 'database is locked')
-            || str_contains($message, 'temporarily unavailable')
-            || str_contains($message, 'timeout');
+        foreach (static::RETRYABLE_ERROR_FRAGMENTS as $fragment) {
+            if (str_contains($message, $fragment)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function buildTransportErrorMessage(Response $response): string
@@ -213,10 +231,42 @@ class D1PdoStatement extends PDOStatement
         $snippet = $body === '' ? '(empty response body)' : substr($body, 0, 500);
 
         return sprintf(
-            'D1 request failed with HTTP %d. Response: %s',
+            'D1 transport error (HTTP %d): %s',
             $response->status(),
             $snippet,
         );
+    }
+
+    protected function buildPdoExceptionFromResponse(Response $response, ?array $payload): PDOException
+    {
+        $message = trim((string) Arr::get($payload, 'errors.0.message', ''));
+        $rawCode = Arr::get($payload, 'errors.0.code', $response->status());
+        $code = is_numeric($rawCode) ? (int) $rawCode : 0;
+
+        if ($message === '') {
+            $message = $this->buildTransportErrorMessage($response);
+            if ($code === 0) {
+                $code = $response->status();
+            }
+        }
+
+        if (stripos($message, 'UNIQUE constraint') !== false || stripos($message, 'SQLITE_CONSTRAINT') !== false) {
+            $message = 'SQLSTATE[23000]: Integrity constraint violation: ' . $message;
+            $code = 23000;
+        }
+
+        return new PDOException($message, $code);
+    }
+
+    protected function isRetryEligibleQuery(string $query): bool
+    {
+        foreach (static::RETRYABLE_QUERY_PATTERNS as $pattern) {
+            if (preg_match($pattern, $query) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function normalizeBinding(mixed $binding): mixed

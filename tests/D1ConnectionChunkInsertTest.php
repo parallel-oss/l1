@@ -4,6 +4,7 @@ namespace Parallel\L1\Test;
 
 use Parallel\L1\CloudflareD1Connector;
 use Parallel\L1\D1\D1Connection;
+use PDOException;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
@@ -106,6 +107,18 @@ class D1ConnectionChunkInsertTest extends TestCase
         $this->assertSame($query, $chunks[0][0]);
     }
 
+    public function testBindingLimitBoundaryAtHundred(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connection = new D1Connection($connector, ['database' => 'test']);
+
+        $method = new ReflectionMethod($connection, 'bindingCountExceedsLimit');
+        $method->setAccessible(true);
+
+        $this->assertFalse($method->invoke($connection, array_fill(0, 100, 'x')));
+        $this->assertTrue($method->invoke($connection, array_fill(0, 101, 'x')));
+    }
+
     /**
      * statement() routes large multi-row INSERTs to chunked insert (e.g. Laravel Telescope).
      */
@@ -190,5 +203,51 @@ class D1ConnectionChunkInsertTest extends TestCase
             $this->assertStringStartsWith('insert into "telescope_entries"', $executedQuery);
             $this->assertLessThanOrEqual(D1Connection::SQLITE_MAX_BINDINGS, count($executedBindings));
         }
+    }
+
+    public function testStatementFailsFastForNonInsertWhenBindingsExceedLimit(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connection = new D1Connection($connector, ['database' => 'test']);
+
+        $query = 'select * from "x" where "id" in (' . implode(', ', array_fill(0, 101, '?')) . ')';
+        $bindings = array_fill(0, 101, 1);
+
+        $this->expectException(PDOException::class);
+        $this->expectExceptionMessage('D1 supports at most 100 bound parameters per query.');
+        $this->expectExceptionMessage('cannot be safely chunked automatically');
+
+        $connection->statement($query, $bindings);
+    }
+
+    public function testInsertFailsFastForUnsplittableInsertShapeOverLimit(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connection = new D1Connection($connector, ['database' => 'test']);
+
+        $query = 'insert into "x" ("a", "b") select ?, ?';
+        $bindings = array_fill(0, 101, 1);
+
+        $this->expectException(PDOException::class);
+        $this->expectExceptionMessage('Only multi-row INSERT ... VALUES (...) statements can be chunked automatically.');
+
+        $connection->insert($query, $bindings);
+    }
+
+    public function testChunkInsertThrowsWhenPlaceholderCountDoesNotMatchBindings(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connection = new D1Connection($connector, ['database' => 'test']);
+
+        $method = new ReflectionMethod($connection, 'chunkInsertQuery');
+        $method->setAccessible(true);
+
+        $query = 'insert into "x" ("a","b") values (?, ?), (?, ?)';
+        $bindings = array_fill(0, 101, 1); // not divisible by 2 placeholders/row
+
+        $this->expectException(PDOException::class);
+        $this->expectExceptionMessage('Placeholder count does not match provided bindings');
+
+        $method->invoke($connection, $query, $bindings);
     }
 }

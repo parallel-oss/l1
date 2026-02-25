@@ -3,6 +3,7 @@
 namespace Parallel\L1\D1;
 
 use Illuminate\Database\SQLiteConnection;
+use PDOException;
 use Parallel\L1\CloudflareD1Connector;
 use Parallel\L1\D1\Pdo\D1Pdo;
 
@@ -46,8 +47,19 @@ class D1Connection extends SQLiteConnection
      */
     public function statement($query, $bindings = [])
     {
+        $query = (string) $query;
+        $bindings = (array) $bindings;
+
         if ($this->isLargeMultiRowInsert($query, $bindings)) {
             return $this->insert($query, $bindings);
+        }
+
+        if ($this->bindingCountExceedsLimit($bindings)) {
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'This statement cannot be safely chunked automatically. Split it into smaller batches.'
+            );
         }
 
         return parent::statement($query, $bindings);
@@ -58,10 +70,8 @@ class D1Connection extends SQLiteConnection
      */
     protected function isLargeMultiRowInsert(string $query, array $bindings): bool
     {
-        if (count($bindings) <= static::SQLITE_MAX_BINDINGS) {
-            return false;
-        }
-        return (bool) preg_match('/\binsert\b.*\bvalues\s*\(/is', $query);
+        return $this->bindingCountExceedsLimit($bindings)
+            && $this->isChunkableMultiRowInsert($query);
     }
 
     /**
@@ -74,13 +84,30 @@ class D1Connection extends SQLiteConnection
      */
     public function insert($query, $bindings = [])
     {
-        $bindingCount = count($bindings);
-        if ($bindingCount <= static::SQLITE_MAX_BINDINGS) {
+        $query = (string) $query;
+        $bindings = (array) $bindings;
+
+        if (! $this->bindingCountExceedsLimit($bindings)) {
             return parent::insert($query, $bindings);
+        }
+
+        if (! $this->isChunkableMultiRowInsert($query)) {
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'Only multi-row INSERT ... VALUES (...) statements can be chunked automatically.'
+            );
         }
 
         $chunks = $this->chunkInsertQuery($query, $bindings);
         foreach ($chunks as [$chunkQuery, $chunkBindings]) {
+            if ($this->bindingCountExceedsLimit($chunkBindings)) {
+                $this->throwBindingLimitExceeded(
+                    $chunkQuery,
+                    $chunkBindings,
+                    'A generated chunk still exceeds the D1 parameter limit.'
+                );
+            }
             parent::insert($chunkQuery, $chunkBindings);
         }
 
@@ -96,47 +123,81 @@ class D1Connection extends SQLiteConnection
      */
     protected function chunkInsertQuery(string $query, array $bindings): array
     {
-        if (! preg_match('/\s+values\s*\(/i', $query)) {
-            return [[$query, $bindings]];
+        if (! $this->isChunkableMultiRowInsert($query)) {
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'Only multi-row INSERT ... VALUES (...) statements can be chunked automatically.'
+            );
         }
 
         $parts = preg_split('/\s+values\s*/i', $query, 2);
-        $header = $parts[0];
-        $valuesPart = $parts[1] ?? '';
+        if (! is_array($parts) || count($parts) < 2) {
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'Unable to parse INSERT statement for chunking.'
+            );
+        }
+
+        $header = rtrim($parts[0]);
+        $valuesPart = ltrim($parts[1]);
 
         $placeholdersPerRow = $this->countPlaceholdersInFirstRow($valuesPart);
         if ($placeholdersPerRow <= 0) {
-            return [[$query, $bindings]];
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'Could not detect row placeholders for chunking.'
+            );
+        }
+
+        if ($placeholdersPerRow > static::SQLITE_MAX_BINDINGS) {
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'A single INSERT row exceeds the D1 parameter limit.'
+            );
+        }
+
+        if (count($bindings) % $placeholdersPerRow !== 0) {
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'Placeholder count does not match provided bindings for chunking.'
+            );
         }
 
         $maxBindingsPerChunk = static::SQLITE_MAX_BINDINGS;
         $rowsPerChunk = (int) floor($maxBindingsPerChunk / $placeholdersPerRow);
         if ($rowsPerChunk <= 0) {
-            return [[$query, $bindings]];
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'Cannot compute a valid chunk size for this INSERT.'
+            );
         }
 
-        $bindingsPerChunk = $rowsPerChunk * $placeholdersPerRow;
         $rowTemplate = $this->extractFirstValueRowTemplate($valuesPart);
         if ($rowTemplate === null) {
-            return [[$query, $bindings]];
+            $this->throwBindingLimitExceeded(
+                $query,
+                $bindings,
+                'Unable to extract INSERT row template for chunking.'
+            );
         }
 
         $chunks = [];
-        $offset = 0;
-        $totalBindings = count($bindings);
-        while ($offset < $totalBindings) {
-            $remaining = $totalBindings - $offset;
-            $take = min($bindingsPerChunk, $remaining);
-            $rowsInChunk = (int) floor($take / $placeholdersPerRow);
-            if ($rowsInChunk <= 0) {
-                break;
-            }
+        $totalRows = (int) (count($bindings) / $placeholdersPerRow);
+
+        for ($rowOffset = 0; $rowOffset < $totalRows; $rowOffset += $rowsPerChunk) {
+            $rowsInChunk = min($rowsPerChunk, $totalRows - $rowOffset);
             $take = $rowsInChunk * $placeholdersPerRow;
-            $chunkBindings = array_slice($bindings, $offset, $take);
+            $bindingOffset = $rowOffset * $placeholdersPerRow;
+            $chunkBindings = array_slice($bindings, $bindingOffset, $take);
             $chunkValues = implode(', ', array_fill(0, $rowsInChunk, $rowTemplate));
             $chunkQuery = $header . ' values ' . $chunkValues;
             $chunks[] = [$chunkQuery, $chunkBindings];
-            $offset += $take;
         }
 
         return $chunks;
@@ -147,15 +208,10 @@ class D1Connection extends SQLiteConnection
      */
     protected function countPlaceholdersInFirstRow(string $valuesPart): int
     {
-        $start = strpos($valuesPart, '(');
-        if ($start === false) {
+        $firstRow = $this->extractFirstValueRowTemplate($valuesPart);
+        if ($firstRow === null) {
             return 0;
         }
-        $end = strpos($valuesPart, ')', $start);
-        if ($end === false) {
-            return 0;
-        }
-        $firstRow = substr($valuesPart, $start, $end - $start + 1);
 
         return substr_count($firstRow, '?');
     }
@@ -169,11 +225,50 @@ class D1Connection extends SQLiteConnection
         if ($start === false) {
             return null;
         }
-        $end = strpos($valuesPart, ')', $start);
-        if ($end === false) {
-            return null;
+
+        $depth = 0;
+        $length = strlen($valuesPart);
+        for ($index = $start; $index < $length; $index++) {
+            $char = $valuesPart[$index];
+
+            if ($char === '(') {
+                $depth++;
+            } elseif ($char === ')') {
+                $depth--;
+
+                if ($depth === 0) {
+                    return substr($valuesPart, $start, $index - $start + 1);
+                }
+            }
         }
 
-        return substr($valuesPart, $start, $end - $start + 1);
+        return null;
+    }
+
+    protected function isChunkableMultiRowInsert(string $query): bool
+    {
+        return (bool) preg_match('/^\s*insert\b.*\bvalues\s*\(/is', $query);
+    }
+
+    protected function bindingCountExceedsLimit(array $bindings): bool
+    {
+        return count($bindings) > static::SQLITE_MAX_BINDINGS;
+    }
+
+    /**
+     * Throw an explicit error before reaching D1 when the query exceeds known limits.
+     */
+    protected function throwBindingLimitExceeded(string $query, array $bindings, string $reason): never
+    {
+        $operation = strtoupper((string) strtok(ltrim($query), " \t\n\r\0\x0B")) ?: 'QUERY';
+        $message = sprintf(
+            'D1 supports at most %d bound parameters per query. %s uses %d bindings. %s',
+            static::SQLITE_MAX_BINDINGS,
+            $operation,
+            count($bindings),
+            $reason,
+        );
+
+        throw new PDOException($message, static::SQLITE_MAX_BINDINGS);
     }
 }

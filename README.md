@@ -70,6 +70,23 @@ CLOUDFLARE_D1_DATABASE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
 The `d1` driver will proxy the PDO queries to the Cloudflare D1 API to run queries.
 
+### D1 compatibility notes
+
+This package keeps D1 usage close to native Laravel/SQLite, while accounting for Cloudflare-specific runtime limits:
+
+- Multi-row `INSERT` queries are automatically chunked to D1's bind-parameter limit.
+- Statements above D1 limits that cannot be safely rewritten fail fast with explicit errors.
+- Transport and API error responses are normalized into stable PDO/Laravel exceptions.
+- Retry behavior is conservative by default (safe/read-only and explicitly idempotent-safe paths).
+
+These constraints still require app-level design choices:
+
+- D1 SQL/statement limits (for example statement size, row/blob size, function argument limits).
+- Workload shaping for long-running writes/migrations (batching and index strategy).
+- Transaction expectations that differ from local SQLite when execution is remote/request-scoped.
+
+See [docs/d1-sqlite-compatibility.md](docs/d1-sqlite-compatibility.md) for the full behavior matrix.
+
 ## 🐛 Testing
 
 Run all tests (the built-in D1 worker is started automatically):
