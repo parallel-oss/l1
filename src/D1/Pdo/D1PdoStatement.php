@@ -2,13 +2,22 @@
 
 namespace Parallel\L1\D1\Pdo;
 
+use BackedEnum;
+use DateTimeInterface;
 use Illuminate\Support\Arr;
 use PDO;
 use PDOException;
 use PDOStatement;
+use Saloon\Http\Response;
+use Stringable;
+use Throwable;
 
 class D1PdoStatement extends PDOStatement
 {
+    protected const MAX_RETRIES = 2;
+
+    protected const RETRYABLE_HTTP_STATUSES = [408, 409, 425, 429, 500, 502, 503, 504];
+
     protected int $fetchMode = PDO::FETCH_ASSOC;
     protected array $bindings = [];
     protected array $responses = [];
@@ -47,24 +56,35 @@ class D1PdoStatement extends PDOStatement
 
     public function execute(?array $params = null): bool
     {
-        $this->bindings = array_values($this->bindings ?: $params ?? []);
-
-        $response = $this->pdo->d1()->databaseQuery(
-            $this->query,
-            $this->bindings,
+        $bindings = $this->bindings !== [] ? $this->bindings : ($params ?? []);
+        $this->bindings = array_map(
+            fn (mixed $binding) => $this->normalizeBinding($binding),
+            array_values($bindings)
         );
 
-        if ($response->failed() || ! $response->json('success')) {
-            $message = (string) $response->json('errors.0.message');
-            $code = (int) $response->json('errors.0.code');
+        [$response, $payload] = $this->executeWithRetries();
+
+        if (! is_array($payload)) {
+            throw new PDOException($this->buildTransportErrorMessage($response), $response->status());
+        }
+
+        if ($response->failed() || ! Arr::get($payload, 'success', false)) {
+            $message = (string) Arr::get($payload, 'errors.0.message', '');
+            $code = (int) Arr::get($payload, 'errors.0.code', $response->status());
+
+            if ($message === '') {
+                $message = $this->buildTransportErrorMessage($response);
+            }
+
             if (stripos($message, 'UNIQUE constraint') !== false || stripos($message, 'SQLITE_CONSTRAINT') !== false) {
                 $message = 'SQLSTATE[23000]: Integrity constraint violation: ' . $message;
                 $code = 23000;
             }
+
             throw new PDOException($message, $code);
         }
 
-        $this->responses = $response->json('result');
+        $this->responses = Arr::get($payload, 'result', []);
         $this->rows = $this->rowsFromResponses();
         $this->rowIndex = 0;
         $lastResult = Arr::last($this->responses);
@@ -117,8 +137,96 @@ class D1PdoStatement extends PDOStatement
     protected function rowsFromResponses(): array
     {
         return collect($this->responses)
-            ->map(fn ($response) => $response['results'])
+            ->map(fn ($response) => $response['results'] ?? [])
             ->collapse()
             ->toArray();
+    }
+
+    /**
+     * @return array{0: Response, 1: array<array-key, mixed>|null}
+     */
+    protected function executeWithRetries(): array
+    {
+        $attempt = 0;
+        $maxAttempts = static::MAX_RETRIES + 1;
+
+        do {
+            $response = $this->pdo->d1()->databaseQuery(
+                $this->query,
+                $this->bindings,
+            );
+
+            $payload = $this->decodeJsonSafely($response);
+
+            if ($payload !== null && ! $response->failed() && Arr::get($payload, 'success', false)) {
+                return [$response, $payload];
+            }
+
+            $attempt++;
+            if ($attempt >= $maxAttempts || ! $this->shouldRetry($response, $payload)) {
+                return [$response, $payload];
+            }
+
+            // Small exponential backoff for transient Cloudflare API failures.
+            usleep(50000 * (2 ** ($attempt - 1)));
+        } while (true);
+    }
+
+    /**
+     * @return array<array-key, mixed>|null
+     */
+    protected function decodeJsonSafely(Response $response): ?array
+    {
+        try {
+            $decoded = $response->json();
+        } catch (Throwable) {
+            return null;
+        }
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    /**
+     * @param  array<array-key, mixed>|null  $payload
+     */
+    protected function shouldRetry(Response $response, ?array $payload): bool
+    {
+        $status = $response->status();
+
+        if (in_array($status, static::RETRYABLE_HTTP_STATUSES, true) || $status >= 520) {
+            return true;
+        }
+
+        $message = strtolower((string) Arr::get($payload, 'errors.0.message', ''));
+        if ($message === '') {
+            return false;
+        }
+
+        return str_contains($message, 'database is locked')
+            || str_contains($message, 'temporarily unavailable')
+            || str_contains($message, 'timeout');
+    }
+
+    protected function buildTransportErrorMessage(Response $response): string
+    {
+        $body = trim($response->body());
+        $snippet = $body === '' ? '(empty response body)' : substr($body, 0, 500);
+
+        return sprintf(
+            'D1 request failed with HTTP %d. Response: %s',
+            $response->status(),
+            $snippet,
+        );
+    }
+
+    protected function normalizeBinding(mixed $binding): mixed
+    {
+        return match (true) {
+            $binding instanceof BackedEnum => $binding->value,
+            $binding instanceof DateTimeInterface => $binding->format('Y-m-d H:i:s'),
+            $binding instanceof Stringable => (string) $binding,
+            is_object($binding) && method_exists($binding, '__toString') => (string) $binding,
+            default => $binding,
+        };
     }
 }
