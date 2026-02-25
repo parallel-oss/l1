@@ -105,4 +105,26 @@ class D1ConnectionChunkInsertTest extends TestCase
         $this->assertCount(1, $chunks);
         $this->assertSame($query, $chunks[0][0]);
     }
+
+    /**
+     * statement() routes large multi-row INSERTs to chunked insert (e.g. Laravel Telescope).
+     */
+    public function testStatementRoutesLargeMultiRowInsertToChunkedInsert(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connection = new D1Connection($connector, ['database' => 'test']);
+
+        $isLarge = new ReflectionMethod($connection, 'isLargeMultiRowInsert');
+        $isLarge->setAccessible(true);
+
+        $largeInsert = 'insert into "telescope_entries" ("batch_id","content","created_at","family_hash","type","uuid") values (?,?,?,?,?,?), (?,?,?,?,?,?)';
+        $manyBindings = array_fill(0, 1000, 'x');
+        $this->assertTrue($isLarge->invoke($connection, $largeInsert, $manyBindings), 'Large multi-row INSERT should be detected');
+
+        $fewBindings = array_fill(0, 12, 'x');
+        $this->assertFalse($isLarge->invoke($connection, $largeInsert, $fewBindings), 'Under limit should not be treated as large');
+
+        $notInsert = 'select * from "telescope_entries" where "id" = ?';
+        $this->assertFalse($isLarge->invoke($connection, $notInsert, array_fill(0, 1000, 'x')), 'SELECT with many bindings should not be treated as large INSERT');
+    }
 }

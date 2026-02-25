@@ -37,6 +37,34 @@ class D1Connection extends SQLiteConnection
     }
 
     /**
+     * Run an SQL statement. Large multi-row INSERTs are chunked to stay under SQLite's bind limit.
+     * (Laravel/Telescope etc. may call statement() directly, bypassing insert().)
+     *
+     * @param  string  $query
+     * @param  array  $bindings
+     * @return bool
+     */
+    public function statement($query, $bindings = [])
+    {
+        if ($this->isLargeMultiRowInsert($query, $bindings)) {
+            return $this->insert($query, $bindings);
+        }
+
+        return parent::statement($query, $bindings);
+    }
+
+    /**
+     * Whether the query is a multi-row INSERT with too many bindings for a single statement.
+     */
+    protected function isLargeMultiRowInsert(string $query, array $bindings): bool
+    {
+        if (count($bindings) <= static::SQLITE_MAX_BINDINGS) {
+            return false;
+        }
+        return (bool) preg_match('/\binsert\b.*\bvalues\s*\(/is', $query);
+    }
+
+    /**
      * Run an insert statement against the database.
      * Chunks large multi-row inserts to stay under SQLite's bind parameter limit.
      *
