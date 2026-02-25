@@ -9,10 +9,10 @@ use Parallel\L1\D1\Pdo\D1Pdo;
 class D1Connection extends SQLiteConnection
 {
     /**
-     * SQLite (and D1) limit on the number of bind parameters per statement.
-     * Exceeding this causes "too many SQL variables" (SQLITE_ERROR).
+     * Cloudflare D1 maximum number of bound parameters per query.
+     * See: https://developers.cloudflare.com/d1/platform/limits/
      */
-    public const SQLITE_MAX_BINDINGS = 999;
+    public const SQLITE_MAX_BINDINGS = 100;
 
     public function __construct(
         protected CloudflareD1Connector $connector,

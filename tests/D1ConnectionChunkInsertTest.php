@@ -10,7 +10,7 @@ use ReflectionMethod;
 class D1ConnectionChunkInsertTest extends TestCase
 {
     /**
-     * Chunk insert splits a multi-row INSERT when bindings exceed SQLite limit (999).
+     * Chunk insert splits a multi-row INSERT when bindings exceed D1 limit.
      */
     public function testChunkInsertSplitsWhenBindingsExceedLimit(): void
     {
@@ -30,7 +30,7 @@ class D1ConnectionChunkInsertTest extends TestCase
     }
 
     /**
-     * When bindings exceed 999, insert is split into multiple chunks.
+     * When bindings exceed the D1 limit (100), insert is split into multiple chunks.
      */
     public function testChunkInsertSplitsIntoMultipleChunks(): void
     {
@@ -41,7 +41,7 @@ class D1ConnectionChunkInsertTest extends TestCase
         $method->setAccessible(true);
 
         $placeholdersPerRow = 15; // e.g. telescope_entries column count
-        $rows = 80; // 80 × 15 = 1200 bindings > 999
+        $rows = 80; // 80 × 15 = 1200 bindings > D1 limit
         $bindings = array_fill(0, $placeholdersPerRow * $rows, 'v');
         $rowTemplate = '(' . implode(', ', array_fill(0, $placeholdersPerRow, '?')) . ')';
         $valuesPart = implode(', ', array_fill(0, $rows, $rowTemplate));
@@ -49,9 +49,9 @@ class D1ConnectionChunkInsertTest extends TestCase
 
         $chunks = $method->invoke($connection, $query, $bindings);
 
-        $maxPerChunk = 999;
-        $rowsPerChunk = (int) floor($maxPerChunk / $placeholdersPerRow); // 66
-        $expectedChunkCount = (int) ceil($rows / $rowsPerChunk); // ceil(80/66) = 2
+        $maxPerChunk = D1Connection::SQLITE_MAX_BINDINGS;
+        $rowsPerChunk = (int) floor($maxPerChunk / $placeholdersPerRow);
+        $expectedChunkCount = (int) ceil($rows / $rowsPerChunk);
 
         $this->assertCount($expectedChunkCount, $chunks);
 
@@ -70,7 +70,7 @@ class D1ConnectionChunkInsertTest extends TestCase
     }
 
     /**
-     * Single-row INSERT is not split even when that row has many columns (under 999).
+     * Single-row INSERT is not split even when that row has many columns (under D1 limit).
      */
     public function testChunkInsertLeavesSingleRowUntouched(): void
     {
@@ -118,13 +118,77 @@ class D1ConnectionChunkInsertTest extends TestCase
         $isLarge->setAccessible(true);
 
         $largeInsert = 'insert into "telescope_entries" ("batch_id","content","created_at","family_hash","type","uuid") values (?,?,?,?,?,?), (?,?,?,?,?,?)';
-        $manyBindings = array_fill(0, 1000, 'x');
+        $manyBindings = array_fill(0, D1Connection::SQLITE_MAX_BINDINGS + 1, 'x');
         $this->assertTrue($isLarge->invoke($connection, $largeInsert, $manyBindings), 'Large multi-row INSERT should be detected');
 
         $fewBindings = array_fill(0, 12, 'x');
         $this->assertFalse($isLarge->invoke($connection, $largeInsert, $fewBindings), 'Under limit should not be treated as large');
 
         $notInsert = 'select * from "telescope_entries" where "id" = ?';
-        $this->assertFalse($isLarge->invoke($connection, $notInsert, array_fill(0, 1000, 'x')), 'SELECT with many bindings should not be treated as large INSERT');
+        $this->assertFalse($isLarge->invoke($connection, $notInsert, array_fill(0, D1Connection::SQLITE_MAX_BINDINGS + 1, 'x')), 'SELECT with many bindings should not be treated as large INSERT');
+    }
+
+    /**
+     * Telescope commonly inserts 6 columns; 18 rows means 108 bindings and must be chunked for D1.
+     */
+    public function testChunkInsertHandlesTelescopeSizedBatchForD1Limit(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connection = new D1Connection($connector, ['database' => 'test']);
+
+        $method = new ReflectionMethod($connection, 'chunkInsertQuery');
+        $method->setAccessible(true);
+
+        $placeholdersPerRow = 6;
+        $rows = 18; // 18 × 6 = 108 > D1 limit (100)
+        $bindings = array_fill(0, $placeholdersPerRow * $rows, 'x');
+        $rowTemplate = '(' . implode(', ', array_fill(0, $placeholdersPerRow, '?')) . ')';
+        $valuesPart = implode(', ', array_fill(0, $rows, $rowTemplate));
+        $query = 'insert into "telescope_entries" ("batch_id","content","created_at","family_hash","type","uuid") values ' . $valuesPart;
+
+        $chunks = $method->invoke($connection, $query, $bindings);
+
+        $rowsPerChunk = (int) floor(D1Connection::SQLITE_MAX_BINDINGS / $placeholdersPerRow); // 16
+        $expectedChunkCount = (int) ceil($rows / $rowsPerChunk); // ceil(18/16) = 2
+        $this->assertCount($expectedChunkCount, $chunks);
+
+        foreach ($chunks as [$chunkQuery, $chunkBindings]) {
+            $this->assertLessThanOrEqual(D1Connection::SQLITE_MAX_BINDINGS, count($chunkBindings));
+            $this->assertStringStartsWith('insert into "telescope_entries"', $chunkQuery);
+        }
+    }
+
+    /**
+     * insert() should execute multiple statements once bindings exceed D1 limit.
+     */
+    public function testInsertExecutesChunkedStatementsWhenOverD1Limit(): void
+    {
+        $connector = $this->createMock(CloudflareD1Connector::class);
+        $connection = new class($connector, ['database' => 'test']) extends D1Connection
+        {
+            public array $recordedStatements = [];
+
+            public function statement($query, $bindings = [])
+            {
+                $this->recordedStatements[] = [$query, $bindings];
+
+                return true;
+            }
+        };
+
+        $placeholdersPerRow = 6;
+        $rows = 18; // 18 × 6 = 108 > D1 limit (100)
+        $bindings = array_fill(0, $placeholdersPerRow * $rows, 'x');
+        $rowTemplate = '(' . implode(', ', array_fill(0, $placeholdersPerRow, '?')) . ')';
+        $valuesPart = implode(', ', array_fill(0, $rows, $rowTemplate));
+        $query = 'insert into "telescope_entries" ("batch_id","content","created_at","family_hash","type","uuid") values ' . $valuesPart;
+
+        $this->assertTrue($connection->insert($query, $bindings));
+        $this->assertCount(2, $connection->recordedStatements, 'Expected split into 2 statements for 108 bindings');
+
+        foreach ($connection->recordedStatements as [$executedQuery, $executedBindings]) {
+            $this->assertStringStartsWith('insert into "telescope_entries"', $executedQuery);
+            $this->assertLessThanOrEqual(D1Connection::SQLITE_MAX_BINDINGS, count($executedBindings));
+        }
     }
 }
