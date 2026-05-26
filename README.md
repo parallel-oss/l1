@@ -20,6 +20,8 @@ You can install the package via Composer:
 composer require parallel-oss/l1
 ```
 
+L1 supports Laravel 12 and 13. Laravel 13 requires PHP 8.3 or newer, matching Laravel's own runtime requirement.
+
 ## 🙌 Usage
 
 ### D1 with raw PDO

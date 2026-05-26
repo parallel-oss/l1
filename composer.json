@@ -34,8 +34,8 @@
     "require": {
         "php": "^8.2",
         "doctrine/dbal": "^4.4.1",
-        "illuminate/cache": "^12.0",
-        "illuminate/database": "^12.0",
+        "illuminate/cache": "^12.0|^13.0",
+        "illuminate/database": "^12.0|^13.0",
         "saloonphp/saloon": "^3.0"
     },
     "suggest": {
@@ -56,9 +56,9 @@
         "test": "bash scripts/run-all-tests.sh"
     },
     "require-dev": {
-        "laravel/framework": "^12.51",
+        "laravel/framework": "^13.0",
         "mockery/mockery": "^1.6.12",
-        "orchestra/testbench": "^10.9",
+        "orchestra/testbench": "^11.0",
         "phpunit/phpunit": "^11.5.3|^12.5.12"
     },
     "config": {
